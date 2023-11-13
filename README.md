@@ -1,4 +1,6 @@
 # PACMAN
-This is a replique of the pacman game. it is written in Python. A list is used to act as a board. Each number in the list represents a part of the board. For instance the number one represents the small dots that pacman eats while the number three represents the vertical lines that is to be drawn on the board. list is parsed through and if and else statements are used to determine how to draw each part of the board. 
-The same list is used to determine when pacman can turn or not. 
+Develop a replica of the Pacman game using Object-oriented concepts and the Pygame package. 
+Implement a Breadth first search algorithm and Dijkstra for the ghosts to follow Pacman
+Implement a joystick control to control movement of Pacman
+Use of Array data structure for the background and to prevent Pacman and the ghosts from  colliding with the wall.
 This is an ongoing project.
