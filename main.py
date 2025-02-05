@@ -184,7 +184,7 @@ class Ghost:
     def generic_ghost_move(self, vertical_bias=False, horizontal_bias=False):
         """
         A simplified ghost movement: try to move toward the target.
-        You can adjust the bias flags to make some ghosts prefer vertical or horizontal movement.
+       .
         """
         tx, ty = self.target
         diff_x = tx - self.x_pos
