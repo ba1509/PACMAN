@@ -2,12 +2,16 @@
 """
 Created on Mon Jan  4 17:20:10 2025
 
-@author: AB 1509
+# -*- coding: utf-8 -*-
 """
+
+import random
 import copy
 import math
 import pygame
 from boards import boards  # Make sure boards.py exists (see below)
+from collections import deque
+import heapq
 
 pygame.init()
 pygame.display.set_caption("Pac-Man")
@@ -32,7 +36,7 @@ wall_color = 'blue'
 # Load player frames (expects images assets/player_images/1.png ... 4.png)
 player_frames = [
     pygame.transform.scale(pygame.image.load(f'assets/player_images/{i}.png'), (45, 45))
-    for i in range(1, 2)
+    for i in range(1, 3)
 ]
 
 
@@ -52,7 +56,7 @@ ghost_imgs = {
 # --------------------------
 
 # Player state
-player_x, player_y = 450, 663
+player_x, player_y = 450, 660
 player_direction = 0  # 0=right, 1=left, 2=up, 3=down
 player_speed = 2
 player_moves = False
@@ -60,9 +64,9 @@ direction_command = 0
 
 # Ghost initial positions and states
 blinky_x, blinky_y, blinky_dir = 56, 58, 0
-inky_x, inky_y, inky_dir = 440, 388, 2
+inky_x, inky_y, inky_dir = 60, 388, 2
 pinky_x, pinky_y, pinky_dir = 440, 438, 2
-clyde_x, clyde_y, clyde_dir = 440, 438, 2
+clyde_x, clyde_y, clyde_dir = 66, 438, 2
 
 # Each ghost has a “target” (updated each frame) and a state dictionary.
 ghost_targets = [(player_x, player_y)] * 4
@@ -72,9 +76,11 @@ ghost_states = {
     'pinky':  {'dead': False, 'in_box': False, 'eaten': False},
     'clyde':  {'dead': False, 'in_box': False, 'eaten': False}
 }
+
 ghost_speeds = [2, 2, 2, 2]
 
 # Animation/timing counters and gameplay variables
+
 frame_counter = 0
 flicker_state = False
 startup_counter = 0
@@ -85,6 +91,18 @@ powerup_timer = 0
 game_over = False
 game_won = False
 allowed_turns = [False, False, False, False]  # For the player
+
+
+def get_cell_value(grid, row, col):
+    """
+        Safely get the value at grid[row][col].
+        If the indices are out of bounds, return 3 (a value indicating a wall).
+        """
+    if 0 <= row < len(grid) and 0 <= col < len(grid[0]):
+        return grid[row][col]
+    else:
+        return 3  # Treat out-of-bound cells as walls.
+
 
 # --------------------------
 # Ghost Class
@@ -132,31 +150,74 @@ class Ghost:
             screen.blit(ghost_imgs['dead'], (self.x_pos, self.y_pos))
         return pygame.Rect(self.center_x - 18, self.center_y - 18, 36, 36)
 
+  
+
     def evaluate_turns(self):
-        """
-        Check which directions are available based on the maze layout.
-        """
-        num1 = (SCREEN_HEIGHT - 50) // 32
-        num2 = SCREEN_WIDTH // 30
-        num3 = 15
+        num1 = (SCREEN_HEIGHT - 50) // 32  # cell height
+        num2 = SCREEN_WIDTH // 30           # cell width
+        num3 = 15  # Fudge factor (this could also be parameterized)
         turns = [False, False, False, False]
-        if 0 < self.center_x // 30 < 29:
+    
+        # Compute the grid indices from pixel coordinates.
+        row_index = int(self.center_y // num1)
+        col_index = int(self.center_x // num2)
+    
+        # Only check if the current column index is within a safe range.
+        if 0 <= col_index < len(level_data[0]) - 1:
             # Right
-            if level_data[self.center_y // num1][(self.center_x + num3) // num2] < 3 or \
-               (level_data[self.center_y // num1][(self.center_x + num3) // num2] == 9 and (self.in_box or self.dead)):
+            right_val = get_cell_value(level_data, int(self.center_y // num1), (self.center_x + num3) // num2)
+            if right_val < 3 or (right_val == 9 and (self.in_box or self.dead)):
                 turns[0] = True
+    
             # Left
-            if level_data[self.center_y // num1][(self.center_x - num3) // num2] < 3 or \
-               (level_data[self.center_y // num1][(self.center_x - num3) // num2] == 9 and (self.in_box or self.dead)):
+            left_val = get_cell_value(level_data, int(self.center_y // num1), (self.center_x - num3) // num2)
+            if left_val < 3 or (left_val == 9 and (self.in_box or self.dead)):
                 turns[1] = True
+    
             # Up
-            if level_data[(self.center_y - num3) // num1][self.center_x // num2] < 3 or \
-               (level_data[(self.center_y - num3) // num1][self.center_x // num2] == 9 and (self.in_box or self.dead)):
+            up_val = get_cell_value(level_data, (self.center_y - num3) // num1, int(self.center_x // num2))
+            if up_val < 3 or (up_val == 9 and (self.in_box or self.dead)):
                 turns[2] = True
+    
             # Down
-            if level_data[(self.center_y + num3) // num1][self.center_x // num2] < 3 or \
-               (level_data[(self.center_y + num3) // num1][self.center_x // num2] == 9 and (self.in_box or self.dead)):
+            down_val = get_cell_value(level_data, (self.center_y + num3) // num1, int(self.center_x // num2))
+            if down_val < 3 or (down_val == 9 and (self.in_box or self.dead)):
                 turns[3] = True
+    
+            # Additional checks for turns when moving vertically.
+            if self.direction in (2, 3):  # up or down
+                if 12 <= self.center_x % num2 <= 18:
+                    val_down = get_cell_value(level_data, (self.center_y + num3) // num1, int(self.center_x // num2))
+                    if val_down < 3 or (val_down == 9 and (self.in_box or self.dead)):
+                        turns[3] = True
+                    val_up = get_cell_value(level_data, (self.center_y - num3) // num1, int(self.center_x // num2))
+                    if val_up < 3 or (val_up == 9 and (self.in_box or self.dead)):
+                        turns[2] = True
+                if 12 <= self.center_y % num1 <= 18:
+                    val_left = get_cell_value(level_data, int(self.center_y // num1), (self.center_x - num2) // num2)
+                    if val_left < 3 or (val_left == 9 and (self.in_box or self.dead)):
+                        turns[1] = True
+                    val_right = get_cell_value(level_data, int(self.center_y // num1), (self.center_x + num2) // num2)
+                    if val_right < 3 or (val_right == 9 and (self.in_box or self.dead)):
+                        turns[0] = True
+    
+            # Additional checks for turns when moving horizontally.
+            if self.direction in (0, 1):  # right or left
+                if 12 <= self.center_x % num2 <= 18:
+                    val_down = get_cell_value(level_data, (self.center_y + num3) // num1, int(self.center_x // num2))
+                    if val_down < 3 or (val_down == 9 and (self.in_box or self.dead)):
+                        turns[3] = True
+                    val_up = get_cell_value(level_data, (self.center_y - num3) // num1, int(self.center_x // num2))
+                    if val_up < 3 or (val_up == 9 and (self.in_box or self.dead)):
+                        turns[2] = True
+                if 12 <= self.center_y % num1 <= 18:
+                    val_left = get_cell_value(level_data, int(self.center_y // num1), (self.center_x - num3) // num2)
+                    if val_left < 3 or (val_left == 9 and (self.in_box or self.dead)):
+                        turns[1] = True
+                    val_right = get_cell_value(level_data, int(self.center_y // num1), (self.center_x + num3) // num2)
+                    if val_right < 3 or (val_right == 9 and (self.in_box or self.dead)):
+                        turns[0] = True
+        
         else:
             # Tunnel wrapping
             turns[0] = True
@@ -165,6 +226,9 @@ class Ghost:
         # Determine if inside ghost box
         in_box = (350 < self.x_pos < 550 and 370 < self.y_pos < 480)
         return turns, in_box
+    
+    
+    
 
     def fallback_move(self):
         """If no preferred move is available, take any allowed turn."""
@@ -184,7 +248,7 @@ class Ghost:
     def generic_ghost_move(self, vertical_bias=False, horizontal_bias=False):
         """
         A simplified ghost movement: try to move toward the target.
-       .
+        
         """
         tx, ty = self.target
         diff_x = tx - self.x_pos
@@ -253,15 +317,152 @@ class Ghost:
         if self.x_pos < -30:
             self.x_pos = 900
         elif self.x_pos > 900:
+            
             self.x_pos = -30
+            
+        print(self.x_pos//30 ,self.y_pos,self.direction)
 
         return self.x_pos, self.y_pos, self.direction
-
+   
     def move_blinky(self):
-        return self.generic_ghost_move()
+    
+        # Use the same grid dimensions as before.
+         num1 = (SCREEN_HEIGHT - 50) // 32
+         num2 = SCREEN_WIDTH // 30
+    
+        # Compute ghost's current grid cell.
+         ghost_row = int(self.center_y // num1)
+         ghost_col = int(self.center_x // num2)
+         start = (ghost_row, ghost_col)
+    
+        # Compute player's grid cell (using player's position from globals).
+         player_row = int((player_y + 23) // num1)
+         player_col = int((player_x + 23) // num2)
+         goal = (player_row, player_col)
+    
+        # Compute the BFS path.
+         path = bfs_path(start, goal, level_data)
+        
+        # If a valid path is found and it contains at least one move:
+         if len(path) >= 2:
+            next_cell = path[1]  # The immediate next cell on the path.
+            dr = next_cell[0] - ghost_row
+            dc = next_cell[1] - ghost_col
+            
+            # Set direction based on the difference.
+            if dr == -1:
+                self.direction = 2  # Up
+            elif dr == 1:
+                self.direction = 3  # Down
+            elif dc == 1:
+                self.direction = 0  # Right
+            elif dc == -1:
+                self.direction = 1  # Left
+    
+        # Move in the chosen direction by self.speed pixels.
+         if self.direction == 0:
+            self.x_pos += self.speed
+         elif self.direction == 1:
+            self.x_pos -= self.speed
+         elif self.direction == 2:
+            self.y_pos -= self.speed
+         elif self.direction == 3:
+            self.y_pos += self.speed
+    
+        # Wrap horizontally if needed.
+         if self.x_pos < -30:
+            self.x_pos = SCREEN_WIDTH
+         elif self.x_pos > SCREEN_WIDTH:
+            self.x_pos = -30
+    
+         return self.x_pos, self.y_pos, self.direction
+
+  
 
     def move_inky(self):
-        return self.generic_ghost_move(vertical_bias=True)
+       
+        """
+        Move Inky using A* pathfinding from its current cell to the player's cell.
+        If A* fails to find a valid path (or returns too short a path),
+        use a fallback method: choose one of the allowed directions (possibly at random)
+        to try and get unstuck.
+        """
+        # Grid parameters (assuming 32 rows, 30 columns and a 50-pixel UI margin)
+        NUM_ROWS = 32
+        NUM_COLS = 30
+        margin = 50
+        cell_height = (SCREEN_HEIGHT - margin) / NUM_ROWS
+        cell_width  = SCREEN_WIDTH / NUM_COLS
+
+        # Compute ghost's current grid cell.
+        ghost_row = int(self.center_y // cell_height)
+        ghost_col = int(self.center_x // cell_width)
+        start = (ghost_row, ghost_col)
+
+        # Compute player's grid cell (using player's global position; assume player's center is roughly (player_x+23, player_y+23)).
+        player_row = int((player_y + 23) // cell_height)
+        player_col = int((player_x + 23) // cell_width)
+        goal = (player_row, player_col)
+
+        # Check if ghost is well aligned with its grid cell.
+        cell_center_x = (ghost_col + 0.5) * cell_width
+        cell_center_y = (ghost_row + 0.5) * cell_height
+        centered = (abs(self.center_x - cell_center_x) < 5 and abs(self.center_y - cell_center_y) < 5)
+
+        if not centered:
+            # If not centered, simply continue moving in the current direction.
+            self._move_in_current_direction()
+            return self.x_pos, self.y_pos, self.direction
+
+        # Use A* to find a path.
+        path = astar_path(start, goal, level_data)
+        
+        if path and len(path) >= 2:
+            # Use the next step from the A* path.
+            next_cell = path[1]
+            dr = next_cell[0] - ghost_row
+            dc = next_cell[1] - ghost_col
+            if dr == -1:
+                self.direction = 2  # Up
+            elif dr == 1:
+                self.direction = 3  # Down
+            elif dc == 1:
+                self.direction = 0  # Right
+            elif dc == -1:
+                self.direction = 1  # Left
+        else:
+            # Fallback: If A* found no path, choose one allowed direction.
+            allowed_dirs = []
+            # Assume self.turns is updated by evaluate_turns()
+            for idx, allowed in enumerate(self.turns):
+                if allowed:
+                    allowed_dirs.append(idx)
+            if allowed_dirs:
+                self.direction = random.choice(allowed_dirs)
+            # If no allowed turn exists, simply continue in the current direction.
+
+        # Move according to the chosen direction.
+        self._move_in_current_direction()
+        print("Inky grid:", start, "Goal:", goal, "Path length:", len(path))
+        return self.x_pos, self.y_pos, self.direction
+
+    def _move_in_current_direction(self):
+        """Move the ghost a number of pixels equal to its speed in its current direction."""
+        if self.direction == 0:
+            self.x_pos += self.speed
+        elif self.direction == 1:
+            self.x_pos -= self.speed
+        elif self.direction == 2:
+            self.y_pos -= self.speed
+        elif self.direction == 3:
+            self.y_pos += self.speed
+
+        # Wrap horizontally if needed.
+        if self.x_pos < -30:
+            self.x_pos = SCREEN_WIDTH
+        elif self.x_pos > SCREEN_WIDTH:
+            self.x_pos = -30
+
 
     def move_pinky(self):
         return self.generic_ghost_move(horizontal_bias=True)
@@ -274,6 +475,61 @@ class Ghost:
         else:
             self.target = (player_x, player_y)
         return self.generic_ghost_move()
+    
+    def move_eaten(self):
+        """
+        If the ghost is dead, compute a path back to the ghost house (home).
+        You can use BFS, A*, or even a simple greedy algorithm.
+        """
+        # Define the home target:
+        home_target = (400, 100)  # Example home coordinates
+        
+        # For simplicity, use the same grid-based approach as before.
+        num1 = (SCREEN_HEIGHT - 50) // 32
+        num2 = SCREEN_WIDTH // 30
+        
+        ghost_row = int(self.center_y // num1)
+        ghost_col = int(self.center_x // num2)
+        start = (ghost_row, ghost_col)
+        
+        # Compute the home cell:
+        home_row = int(home_target[1] // num1)
+        home_col = int(home_target[0] // num2)
+        goal = (home_row, home_col)
+        
+        # Use BFS (or A*) to get the path:
+        path = bfs_path(start, goal, level_data)
+        if len(path) >= 2:
+            next_cell = path[1]
+            dr = next_cell[0] - ghost_row
+            dc = next_cell[1] - ghost_col
+            if dr == -1:
+                self.direction = 2  # up
+            elif dr == 1:
+                self.direction = 3  # down
+            elif dc == 1:
+                self.direction = 0  # right
+            elif dc == -1:
+                self.direction = 1  # left
+    
+        # Move as before:
+        if self.direction == 0:
+            self.x_pos += self.speed
+        elif self.direction == 1:
+            self.x_pos -= self.speed
+        elif self.direction == 2:
+            self.y_pos -= self.speed
+        elif self.direction == 3:
+            self.y_pos += self.speed
+        
+        # Wrap horizontally if needed:
+        if self.x_pos < -30:
+            self.x_pos = SCREEN_WIDTH
+        elif self.x_pos > SCREEN_WIDTH:
+            self.x_pos = -30
+    
+        return self.x_pos, self.y_pos, self.direction
+
 
 # --------------------------
 # Utility Functions
@@ -306,7 +562,7 @@ def handle_player_collisions(score, powerup, p_timer, eaten):
     num2 = SCREEN_WIDTH // 30
     cx = player_x + 23
     cy = player_y + 24
-    if 0 < player_x < 870:
+    if 0 < player_x < SCREEN_WIDTH - 30 :
         cell_value = level_data[cy // num1][cx // num2]
         if cell_value == 1:
             level_data[cy // num1][cx // num2] = 0
@@ -397,6 +653,102 @@ def check_turns(cx, cy):
         turns[1] = True
     return turns
 
+def bfs_path(start, goal, grid):
+    """
+    Perform a breadth-first search on the grid from start to goal.
+    A cell is considered passable if grid[r][c] < 3.
+    Returns the path as a list of (row, col) tuples (including start and goal),
+    or an empty list if no path is found.
+    """
+    queue = deque([start])
+    visited = {start}
+    parent = {start: None}
+    
+    while queue:
+        current = queue.popleft()
+        if current == goal:
+            break
+        r, c = current
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < len(grid) and 0 <= nc < len(grid[0]):
+                # A cell is passable if its value is less than 3.
+                if grid[nr][nc] < 3 and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    parent[(nr, nc)] = current
+                    queue.append((nr, nc))
+    
+    if goal not in parent:
+        return []  # No path found.
+    
+    # Reconstruct the path from goal back to start.
+    path = []
+    node = goal
+    while node is not None:
+        path.append(node)
+        node = parent[node]
+    path.reverse()
+    return path
+
+
+def astar_path(start, goal, grid):
+    """
+    Compute the A* path from start to goal on the grid.
+    
+    :param start: Tuple (row, col) for the starting cell.
+    :param goal:  Tuple (row, col) for the goal cell.
+    :param grid: 2D list representing the maze. A cell is passable if its value < 3.
+    :return:      A list of (row, col) tuples representing the path from start to goal,
+                  including both start and goal. Returns an empty list if no path exists.
+    """
+    # Priority queue; each item is a tuple: (priority, (row, col))
+    open_set = []
+    heapq.heappush(open_set, (0, start))
+    
+    # Dictionaries to store the cost to reach each cell and to reconstruct the path.
+    came_from = {start: None}
+    cost_so_far = {start: 0}
+    
+    # Helper: Manhattan distance heuristic.
+    def heuristic(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    
+    while open_set:
+        current_priority, current = heapq.heappop(open_set)
+        
+        if current == goal:
+            break
+        
+        r, c = current
+        # Four possible moves: up, down, left, right.
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            neighbor = (r + dr, c + dc)
+            nr, nc = neighbor
+            # Check boundaries.
+            if 0 <= nr < len(grid) and 0 <= nc < len(grid[0]):
+                # Check if the cell is passable.
+                if grid[nr][nc] < 3:
+                    new_cost = cost_so_far[current] + 1  # Uniform cost for grid movement.
+                    if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                        cost_so_far[neighbor] = new_cost
+                        priority = new_cost + heuristic(neighbor, goal)
+                        heapq.heappush(open_set, (priority, neighbor))
+                        came_from[neighbor] = current
+
+    # If no path was found, return an empty list.
+    if goal not in came_from:
+        return []
+    
+    # Reconstruct the path from goal back to start.
+    path = []
+    node = goal
+    while node is not None:
+        path.append(node)
+        node = came_from[node]
+    path.reverse()
+    return path
+
+
 
 def move_player(px, py):
     """Move the player if the next cell in the current direction is allowed."""
@@ -411,11 +763,14 @@ def move_player(px, py):
     return px, py
 
 
+
+
+
 def determine_ghost_targets(blx, bly, inx, iny, pix, piy, clx, cly):
     """
     Compute each ghost’s target based on the powerup state and their status.
     """
-    return_base = (380, 400)
+    return_base = (380, 400)  # needs to be changed
     if player_x < 450:
         runaway_x = 900
     else:
@@ -426,6 +781,7 @@ def determine_ghost_targets(blx, bly, inx, iny, pix, piy, clx, cly):
         runaway_y = 0
 
     def ghost_target_logic(gname, gx, gy, eaten):
+        # returns ghost to the box
         if powerup_active:
             if not ghost_states[gname]['dead'] and not eaten:
                 if gname == 'blinky':
@@ -489,6 +845,10 @@ def reset_game_state():
 # --------------------------
 # Main Game Loop
 # --------------------------
+ghost_house_left = 350
+ghost_house_right = 550
+ghost_house_top = 370
+ghost_house_bottom = 480
 
 running = True
 while running:
@@ -579,7 +939,7 @@ while running:
         if not ghost_states['blinky']['dead'] and not blinky.in_box:
             blinky_x, blinky_y, blinky_dir = blinky.move_blinky()
         else:
-            blinky_x, blinky_y, blinky_dir = blinky.move_clyde()
+            blinky_x, blinky_y, blinky_dir = blinky.move_eaten()
         if not ghost_states['pinky']['dead'] and not pinky.in_box:
             pinky_x, pinky_y, pinky_dir = pinky.move_pinky()
         else:
@@ -601,6 +961,7 @@ while running:
     ghost_states['inky']['eaten'] = eaten_list[1]
     ghost_states['pinky']['eaten'] = eaten_list[2]
     ghost_states['clyde']['eaten'] = eaten_list[3]
+    # Suppose we define the ghost house boundaries dynamically or with fixed numbers:
 
     # Check collisions between the player and ghosts (when not powered up)
     if not powerup_active:
@@ -618,12 +979,15 @@ while running:
 
     # If powerup is active, check if the player “eats” a ghost
     def handle_powerup_eat(ghost_name, ghost_obj):
+        ghost_home = (400, 100)  # Or a point in the ghost house, such as (400, 100)
+
         if powerup_active and player_hitbox.colliderect(ghost_obj.rect) and not ghost_states[ghost_name]['dead']:
             if not ghost_states[ghost_name]['eaten']:
                 ghost_states[ghost_name]['dead'] = True
                 ghost_states[ghost_name]['eaten'] = True
                 eaten_count = sum(ghost_states[g]['eaten'] for g in ghost_states)
                 score_gain = (2 ** eaten_count) * 100
+                
                 return score_gain
         return 0
 
